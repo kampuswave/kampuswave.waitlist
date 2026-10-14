@@ -2637,13 +2637,15 @@
         ["Student Centres", "Student centre", "s", "CONNECT"],
       ];
 
-      const LOCATION_IMAGES = [
-        "https://res.cloudinary.com/rclvnovx/image/upload/v1791931142/Focused_Study_in_a_Colorful_Dorm_Room.png",
-        "https://res.cloudinary.com/rclvnovx/image/upload/v1791934300/Vibrant_University_Lecture_Hall_Workshop.png",
-        "https://res.cloudinary.com/rclvnovx/image/upload/v1791935373/Bright_Cosy_Library_Reading_Room.png",
-        "https://res.cloudinary.com/rclvnovx/image/upload/v1791935757/LASUED_Atrium_Study_Hall.png",
-      ];
+      <!--  -->
 
+      const LOCATION_IMAGES = [
+        "https://res.cloudinary.com/rclvnovx/image/upload/f_auto,q_auto,w_600,c_limit/v1791931142/Focused_Study_in_a_Colorful_Dorm_Room.png",
+        "https://res.cloudinary.com/rclvnovx/image/upload/f_auto,q_auto,w_600,c_limit/v1791934300/Vibrant_University_Lecture_Hall_Workshop.png",
+        "https://res.cloudinary.com/rclvnovx/image/upload/f_auto,q_auto,w_600,c_limit/v1791935373/Bright_Cosy_Library_Reading_Room.png",
+        "https://res.cloudinary.com/rclvnovx/image/upload/f_auto,q_auto,w_600,c_limit/v1791935757/LASUED_Atrium_Study_Hall.png",
+      ];
+      <!--  -->
       $("#locGrid").innerHTML = LOCS.map(
         ([t, v, k, d], i) => `
     <button
@@ -2855,7 +2857,7 @@
           {
             cap: "On campus, always connected",
             alt: "Connected campus, brighter futures",
-            src: "https://res.cloudinary.com/rclvnovx/image/upload/v1791747881/Connected_Campus_Brighter_Futures.png",
+            src: "https://res.cloudinary.com/rclvnovx/image/upload/f_auto,q_auto,w_900,c_limit/v1791747881/Connected_Campus_Brighter_Futures.png",
             w: 900,
             h: 771,
           },
@@ -3001,9 +3003,25 @@
           f.setAttribute("aria-hidden", "true");
           f.setAttribute("role", "img");
           f.setAttribute("aria-label", d.alt);
-          if (d.src)
-            f.innerHTML = `<img src="${d.src}" width="${d.w}" height="${d.h}" alt="" loading="lazy" decoding="async">`;
-          else {
+
+          if (d.src) {
+            const img = document.createElement("img");
+
+            img.src = d.src;
+            img.width = d.w;
+            img.height = d.h;
+            img.alt = "";
+            img.decoding = "async";
+
+            // Load the first hero image immediately.
+            img.loading = i === 0 ? "eager" : "lazy";
+
+            if (i === 0) {
+              img.fetchPriority = "high";
+            }
+
+            f.appendChild(img);
+          } else {
             const [a, b, g, body] = scenes[d.scene];
             f.innerHTML = `<svg viewBox="0 0 560 480" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs><linearGradient id="hcs${i}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient></defs><rect width="560" height="480" fill="url(#hcs${i})"/><rect y="388" width="560" height="92" fill="${g}"/>${body}${wifi}</svg>`;
           }
