@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <title>KampusWave — Fast Wi-Fi. Better Campus Life.</title>
+    <title>KampusWave — your internet struggles end here</title>
     <link
       href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=DM+Sans:wght@400;500;700&display=swap"
       rel="stylesheet"
@@ -2513,10 +2513,38 @@
       </footer>
     </div>
 
+    <script
+      src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/dist/umd/supabase.js"
+      integrity="sha384-K1nraABOP/zFehpLIUksXebbs7jMpB8gYMlb+uhVKZcWT/9Vkq1+qhv6ndC+1Yuz"
+      crossorigin="anonymous"
+    ></script>
+    <script src="supabase-config.js"></script>
     <script>
-      /* ===== Backend integration point =====
-   Set ENDPOINT to your API URL. Payload shape is in submitWaitlist(). */
-      const ENDPOINT = "";
+      /* ===== Supabase connection =====
+   URL + publishable key live in supabase-config.js. Table + security: supabase/schema.sql.
+   The browser may only INSERT into public.waitlist_signups (enforced by Row Level Security). */
+      const SB_CFG = window.KW_SUPABASE || {};
+      const SB_CONFIGURED =
+        /^https:\/\//.test(SB_CFG.url || "") &&
+        !!SB_CFG.key &&
+        !/YOUR_/.test(SB_CFG.url + SB_CFG.key);
+      let sbClient = null;
+      function getSb() {
+        if (!SB_CONFIGURED) throw new Error("NOT_CONNECTED");
+        if (!window.supabase) throw new Error("SDK_MISSING");
+        // no session storage: visitors are anonymous, nothing is saved in their browser
+        return (sbClient ||= window.supabase.createClient(
+          SB_CFG.url,
+          SB_CFG.key,
+          {
+            auth: {
+              persistSession: false,
+              autoRefreshToken: false,
+              detectSessionInUrl: false,
+            },
+          },
+        ));
+      }
       const $ = (s, r = document) => r.querySelector(s);
       const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
@@ -3091,14 +3119,82 @@
       );
       $("#consent").onchange = () => check("consent");
 
+      // Form label -> stable database code. If you ever reword an option in the
+      // form, update the matching key here (and the CHECK list in supabase/schema.sql
+      // only if you add a brand-new option). An unmapped label fails loudly, never silently.
+      const SPEND_CODE = {
+        "Under ₦2,000": "under_2000",
+        "₦2,000–₦3,000": "2000_3000",
+        "₦3,000–₦5,000": "3000_5000",
+        "Over ₦5,000": "over_5000",
+      };
+      const INTEREST_CODE = {
+        "Yes, this is a great oppurtunity": "yes",
+        Maybe: "maybe",
+        "No, i can afford data bundle": "no_can_afford_data",
+        "The ₦4,999/month is expensive": "too_expensive",
+      };
+      const DEVICE_CODE = {
+        One: "one",
+        Two: "two",
+        "Three or more": "three_plus",
+      };
+      function code(map, label, field) {
+        if (!(label in map)) throw new Error("UNMAPPED_" + field);
+        return map[label];
+      }
+      // the payload built by the submit handler -> columns of public.waitlist_signups
+      function toRow(p) {
+        const interest = code(INTEREST_CODE, p.interestAt4999, "INTEREST");
+        return {
+          full_name: p.fullName,
+          whatsapp: p.whatsapp,
+          email: p.email,
+          location: p.location,
+          location_other: p.location === "Other" ? p.locationOther : null,
+          monthly_spend: p.monthlySpend
+            ? code(SPEND_CODE, p.monthlySpend, "SPEND")
+            : null,
+          monthly_spend_custom_naira: p.monthlySpend
+            ? null
+            : p.monthlySpendCustomNaira,
+          interest_at_4999: interest,
+          affordable_monthly_naira:
+            interest === "too_expensive" ? p.affordableMonthlyNaira : null,
+          devices: code(DEVICE_CODE, p.devices, "DEVICES"),
+          has_question:
+            p.hasQuestion === "Yes"
+              ? true
+              : p.hasQuestion === "No"
+                ? false
+                : null,
+          question: p.hasQuestion === "Yes" ? p.question : null,
+          consent: true,
+        };
+      }
+      // resolves "saved" | "duplicate" once Supabase confirms; throws otherwise
       async function submitWaitlist(payload) {
-        if (!ENDPOINT) throw new Error("NOT_CONNECTED");
-        const r = await fetch(ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (!r.ok) throw new Error("HTTP " + r.status);
+        const sb = getSb();
+        const row = toRow(payload);
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 15000);
+        try {
+          // no .select(): the public role is not allowed to read rows back
+          const { error } = await sb
+            .from("waitlist_signups")
+            .insert(row)
+            .abortSignal(ctl.signal);
+          if (error) {
+            // 23505 = this phone number is already on the list
+            if (error.code === "23505") return "duplicate";
+            const e = new Error("DB_ERROR");
+            e.dbCode = error.code || "";
+            throw e;
+          }
+          return "saved";
+        } finally {
+          clearTimeout(timer);
+        }
       }
       function showSuccess() {
         form.style.display = "none";
@@ -3107,8 +3203,10 @@
         ok.focus();
       }
 
+      let submitting = false;
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
+        if (submitting) return; // ignore double clicks / double Enter
         const results = ["name", "wa", "email", "consent"]
           .map(check)
           .concat(groups.map(checkG));
@@ -3139,16 +3237,34 @@
           submittedAt: new Date().toISOString(),
         };
         const btn = $("button[type=submit]", form);
+        const btnLabel = btn.textContent;
+        submitting = true;
         btn.disabled = true;
+        btn.setAttribute("aria-busy", "true");
+        btn.textContent = "Sending…";
         status.textContent = "Sending…";
+        let saved = false;
         try {
-          await submitWaitlist(payload);
+          await submitWaitlist(payload); // success is shown only after Supabase confirms
+          saved = true;
+          status.textContent = "";
+          form.reset();
           showSuccess();
         } catch (err) {
+          if (err.message !== "NOT_CONNECTED")
+            console.error(
+              "[KampusWave] signup failed:",
+              err.message,
+              err.dbCode || "",
+            );
           status.innerHTML =
             err.message === "NOT_CONNECTED"
               ? 'Sign-ups aren\'t being collected yet — this form isn\'t connected to a backend. <a href="#" id="prev" style="color:var(--y)">Preview the success screen</a>'
-              : "We couldn't send your details. Check your connection and try again.";
+              : err.message === "DB_ERROR" && /^23/.test(err.dbCode)
+                ? "Some of your details weren't accepted. Please check them and try again."
+                : err.message === "DB_ERROR" && err.dbCode
+                  ? "We couldn't save your details right now. Please try again in a moment."
+                  : "We couldn't send your details. Check your connection and try again.";
           const p = $("#prev");
           if (p)
             p.onclick = (ev) => {
@@ -3156,7 +3272,10 @@
               showSuccess();
             };
         } finally {
-          btn.disabled = false;
+          submitting = false;
+          btn.removeAttribute("aria-busy");
+          btn.textContent = btnLabel;
+          if (!saved) btn.disabled = false; // keep the answers; let them retry
         }
       });
     </script>
